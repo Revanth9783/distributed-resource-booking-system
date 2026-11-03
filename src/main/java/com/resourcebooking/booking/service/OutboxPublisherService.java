@@ -37,7 +37,12 @@ public class OutboxPublisherService {
         for (OutboxEvent event : events) {
 
             try {
-                String message = event.getPayload();
+                String message = String.format(
+                        "{\"eventId\":\"%s\",\"eventType\":\"%s\",\"payload\":%s}",
+                        event.getId(),
+                        event.getEventType(),
+                        event.getPayload()
+                );
 
                 kafkaTemplate.send(
                         TOPIC,

@@ -23,7 +23,7 @@ public class SlotCacheInvalidationListener {
 
         Cache cache = cacheManager.getCache("slots");
 
-        if (cache != null) {
+        if (cache != null && event.resourceId() != null) {
             cache.evict(event.resourceId());
         }
     }
