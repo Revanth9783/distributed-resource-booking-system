@@ -2,6 +2,7 @@
 package com.resourcebooking.booking.repository;
 
 import com.resourcebooking.booking.entity.AvailabilitySlot;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -13,6 +14,14 @@ public interface AvailabilitySlotRepository
         extends JpaRepository<AvailabilitySlot, Long> {
 
     List<AvailabilitySlot> findByResourceId(Long resourceId);
+
+    // Find the resource associated with a slot.
+    @Query("""
+        SELECT s.resourceId
+        FROM AvailabilitySlot s
+        WHERE s.id = :slotId
+        """)
+    Long findResourceIdBySlotId(@Param("slotId") Long slotId);
 
     // Reserve capacity atomically when a booking is created.
     @Modifying

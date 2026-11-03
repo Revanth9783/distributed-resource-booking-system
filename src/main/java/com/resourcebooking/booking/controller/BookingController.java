@@ -11,6 +11,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 @RestController
 @RequestMapping("/api/bookings")
@@ -23,13 +26,18 @@ public class BookingController {
     }
 
     // Create a booking
+
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public BookingResponse createBooking(
-            @Valid @RequestBody CreateBookingRequest request) {
+            @Valid @RequestBody CreateBookingRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
 
-        return bookingService.createBooking(request);
+        return bookingService.createBooking(request, idempotencyKey);
     }
+
+
 
     // Get booking by ID
     @GetMapping("/{bookingId}")

@@ -1,0 +1,6 @@
+.git/
+.idea/
+*.iml
+.env
+*.log
+cross_server_test.py

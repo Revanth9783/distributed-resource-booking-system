@@ -6,6 +6,8 @@ import com.resourcebooking.booking.dto.ResourceResponse;
 import com.resourcebooking.booking.entity.Resource;
 import com.resourcebooking.booking.entity.ResourceStatus;
 import com.resourcebooking.booking.repository.ResourceRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +23,7 @@ public class ResourceService {
     }
 
     @Transactional
+    @CacheEvict(value = "resources", allEntries = true)
     public ResourceResponse createResource(CreateResourceRequest request) {
         Resource resource = new Resource();
         resource.setResourceTypeId(request.getResourceTypeId());
@@ -34,6 +37,7 @@ public class ResourceService {
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(value = "resources", key = "'all'")
     public List<ResourceResponse> getResources() {
         return resourceRepository.findAll()
                 .stream()
