@@ -16,6 +16,10 @@ import com.resourcebooking.booking.repository.IdempotencyKeyRepository;
 import com.resourcebooking.booking.repository.OutboxEventRepository;
 import com.resourcebooking.booking.repository.UserRepository;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,13 +43,21 @@ public class BookingService {
     private final OutboxEventRepository outboxEventRepository;
     private final ApplicationEventPublisher eventPublisher;
 
+    // Custom application metrics
+    private final Counter bookingRequests;
+    private final Counter successfulBookings;
+    private final Counter failedBookings;
+    private final Counter idempotentRetries;
+    private final Timer bookingProcessingTime;
+
     public BookingService(
             AvailabilitySlotRepository slotRepository,
             BookingRepository bookingRepository,
             UserRepository userRepository,
             IdempotencyKeyRepository idempotencyKeyRepository,
             OutboxEventRepository outboxEventRepository,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            MeterRegistry meterRegistry) {
 
         this.slotRepository = slotRepository;
         this.bookingRepository = bookingRepository;
@@ -53,6 +65,21 @@ public class BookingService {
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.eventPublisher = eventPublisher;
+
+        this.bookingRequests = meterRegistry.counter(
+                "booking.requests.total");
+
+        this.successfulBookings = meterRegistry.counter(
+                "booking.success.total");
+
+        this.failedBookings = meterRegistry.counter(
+                "booking.failure.total");
+
+        this.idempotentRetries = meterRegistry.counter(
+                "booking.idempotent.retries.total");
+
+        this.bookingProcessingTime = meterRegistry.timer(
+                "booking.processing.time");
     }
 
     // Create booking with atomic capacity reservation,
@@ -62,8 +89,34 @@ public class BookingService {
             CreateBookingRequest request,
             String idempotencyKey) {
 
+        bookingRequests.increment();
+
+        return bookingProcessingTime.record(() -> {
+
+            try {
+                BookingResponse response =
+                        createBookingInternal(request, idempotencyKey);
+
+                successfulBookings.increment();
+
+                return response;
+
+            } catch (RuntimeException exception) {
+
+                failedBookings.increment();
+
+                throw exception;
+            }
+        });
+    }
+
+    private BookingResponse createBookingInternal(
+            CreateBookingRequest request,
+            String idempotencyKey) {
+
         if (idempotencyKey == null || idempotencyKey.isBlank()
                 || idempotencyKey.length() > 200) {
+
             throw new IllegalArgumentException(
                     "Idempotency-Key must contain 1 to 200 characters");
         }
@@ -78,8 +131,7 @@ public class BookingService {
                 request.getUserId(),
                 idempotencyKey,
                 requestHash,
-                LocalDateTime.now().plusHours(24)
-        );
+                LocalDateTime.now().plusHours(24));
 
         IdempotencyKey savedKey =
                 idempotencyKeyRepository
@@ -109,6 +161,8 @@ public class BookingService {
                     .orElseThrow(() -> new IllegalStateException(
                             "Original booking could not be found"));
 
+            idempotentRetries.increment();
+
             return BookingResponse.from(originalBooking);
         }
 
@@ -120,8 +174,7 @@ public class BookingService {
         // Reserve capacity atomically.
         int updated = slotRepository.reserveCapacity(
                 request.getSlotId(),
-                request.getQuantity()
-        );
+                request.getQuantity());
 
         if (updated == 0) {
             throw new SlotUnavailableException(
@@ -149,8 +202,7 @@ public class BookingService {
                 "BOOKING",
                 savedBooking.getId(),
                 "BOOKING_CREATED",
-                createBookingPayload(savedBooking)
-        );
+                createBookingPayload(savedBooking));
 
         outboxEventRepository.save(outboxEvent);
 
@@ -160,9 +212,7 @@ public class BookingService {
                         savedBooking.getSlotId() == null
                                 ? null
                                 : slotRepository.findResourceIdBySlotId(
-                                savedBooking.getSlotId())
-                )
-        );
+                                savedBooking.getSlotId())));
 
         return BookingResponse.from(savedBooking);
     }
@@ -176,8 +226,7 @@ public class BookingService {
                 booking.getBookingReference(),
                 booking.getUserId(),
                 booking.getSlotId(),
-                booking.getQuantity()
-        );
+                booking.getQuantity());
     }
 
     private String calculateRequestHash(CreateBookingRequest request) {
@@ -238,8 +287,7 @@ public class BookingService {
 
         int updated = slotRepository.restoreCapacity(
                 booking.getSlotId(),
-                booking.getQuantity()
-        );
+                booking.getQuantity());
 
         if (updated != 1) {
             throw new IllegalStateException(
@@ -255,19 +303,16 @@ public class BookingService {
                 "BOOKING",
                 savedBooking.getId(),
                 "BOOKING_CANCELLED",
-                createBookingPayload(savedBooking)
-        );
+                createBookingPayload(savedBooking));
 
         outboxEventRepository.save(outboxEvent);
 
         // Invalidate slot cache after successful commit.
         Long resourceId = slotRepository.findResourceIdBySlotId(
-                savedBooking.getSlotId()
-        );
+                savedBooking.getSlotId());
 
         eventPublisher.publishEvent(
-                new SlotCacheInvalidationEvent(resourceId)
-        );
+                new SlotCacheInvalidationEvent(resourceId));
 
         return BookingResponse.from(savedBooking);
     }

@@ -1,4 +1,3 @@
-
 package com.resourcebooking.booking.service;
 
 import com.resourcebooking.booking.dto.CreateSlotRequest;
@@ -8,7 +7,6 @@ import com.resourcebooking.booking.entity.SlotStatus;
 import com.resourcebooking.booking.event.SlotCacheInvalidationEvent;
 import com.resourcebooking.booking.repository.AvailabilitySlotRepository;
 
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -68,7 +66,6 @@ public class AvailabilitySlotService {
     }
 
     @Transactional(readOnly = true)
-    @Cacheable(value = "slots", key = "#resourceId")
     public List<SlotResponse> getSlotsByResource(Long resourceId) {
 
         return slotRepository.findByResourceId(resourceId)
