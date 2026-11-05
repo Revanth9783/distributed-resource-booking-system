@@ -478,3 +478,94 @@ Test plans, available raw results, and screenshots are stored under:
 `docs/results/`
 
 All results should be retained for the final project report, poster, and GitHub README.
+
+## Test 7: NGINX Load Balancing Verification — PASSED
+
+### Objective
+Verify that NGINX distributes incoming HTTP requests across three Spring Boot application replicas.
+
+### Test Configuration
+- Reverse proxy: NGINX
+- Application replicas: 3
+- Endpoint: `GET /api/slots/resource/9`
+- Total requests: 100
+- Entry point: `http://localhost:8082`
+
+### Results
+
+| Metric | Result |
+|---|---|
+| Total requests | 100 |
+| Successful requests | 100 |
+| Failed requests | 0 |
+| Success rate | 100% |
+| Backend replicas observed | 3 |
+| HTTP status | 200 |
+
+### Verified Backend Distribution
+
+| Replica | Docker IP |
+|---|---|
+| booking-app-1 | 172.18.0.5 |
+| booking-app-2 | 172.18.0.2 |
+| booking-app-3 | 172.18.0.9 |
+
+NGINX access logs confirmed that requests were forwarded to all three backend IP addresses.
+
+The NGINX upstream configuration included all three application replicas and used the default weighted round-robin load-balancing method.
+
+### Conclusion
+The test verified successful HTTP request handling through NGINX and demonstrated that traffic reached all three application replicas. All 100 requests completed successfully, with no recorded failures.
+
+The test confirms request distribution across three replicas but does not measure exact per-replica traffic percentages.
+
+**Status: PASSED**
+
+### Evidence
+- `docs/results/screenshots/nginx-load-balancing-verification.png`
+- `docs/results/screenshots/nginx-replica-ip-mapping.png`
+
+
+## Test 8: Kafka Event Publication and Transactional Outbox Verification — PASSED
+
+**Objective:** Verify that booking events are published to Kafka and that the transactional outbox records are processed.
+
+### Kafka Topic Verification
+
+The following Kafka topics were confirmed:
+
+- `booking-events`
+- `booking-events.DLT`
+- `__consumer_offsets`
+
+### Kafka Event Verification
+
+The Kafka console consumer successfully retrieved 119 messages from the `booking-events` topic.
+
+Observed events included `BOOKING_CREATED` messages containing event IDs, booking IDs, slot IDs, user IDs, quantities, and booking references.
+
+Events associated with slot `2021`, used during concurrent booking testing, were observed.
+
+### Transactional Outbox Verification
+
+Application logs confirmed repeated polling of the `outbox_events` table using `FOR UPDATE SKIP LOCKED`.
+
+PostgreSQL verification returned:
+
+| Status | Count |
+|---|---:|
+| PUBLISHED | 112 |
+| PENDING | 0 |
+
+All 112 outbox records were marked `PUBLISHED` at the time of verification.
+
+### Conclusion
+
+**PASSED:** Kafka event publication and retrieval were verified, and the database showed no pending outbox records.
+
+Application consumer processing, delivery guarantees under failure, and crash recovery were not independently verified.
+
+### Evidence
+
+- `docs/results/screenshots/kafka-event-delivery.png`
+- `docs/results/screenshots/kafka-outbox-published.png`
