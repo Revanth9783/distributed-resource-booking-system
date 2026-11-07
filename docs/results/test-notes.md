@@ -569,3 +569,49 @@ Application consumer processing, delivery guarantees under failure, and crash re
 
 - `docs/results/screenshots/kafka-event-delivery.png`
 - `docs/results/screenshots/kafka-outbox-published.png`
+
+## Test 8: Redis Cache Verification — PASSED
+
+**Date:** 7 November 2026
+
+**Objective:** Verify Redis-backed caching for the resource listing endpoint.
+
+**Environment:**
+- Three Spring Boot application replicas behind NGINX
+- Redis running in Docker
+- Endpoint: `GET http://localhost:8082/api/resources`
+- Cache key: `resources::v2::all`
+- Configured cache TTL: 60 seconds
+
+**Procedure:**
+1. Rebuilt and restarted all three application replicas with the updated Redis configuration.
+2. Sent repeated GET requests through Postman.
+3. Verified successful API responses.
+4. Inspected Redis cache keys using `redis-cli --scan`.
+5. Checked Redis keyspace hit and miss counters.
+6. Repeated requests with waiting periods between them.
+
+**Observed Results:**
+
+| Metric | Result |
+|---|---|
+| Reported Postman requests | 13 |
+| Redis cache hits | 9 |
+| Redis cache misses | 3 |
+| Redis key found | `resources::v2::all` |
+| Observed Redis hit ratio | 75% |
+| API responses | Successful |
+
+**Findings:**
+
+- Redis successfully stored the resource listing cache entry.
+- Repeated requests produced Redis cache hits.
+- Additional cache misses were observed after waiting between requests, consistent with possible TTL expiration.
+- Redis counters are global and do not necessarily correspond one-to-one with the reported Postman requests.
+- The test confirms functioning Redis-backed caching, but does not establish a measured latency improvement.
+
+**Evidence:**
+
+`docs/results/screenshots/redis-cache-hit-miss-verification.png`
+
+**Conclusion:** PASSED — Redis caching is operational, and cache hits and misses were observed.
