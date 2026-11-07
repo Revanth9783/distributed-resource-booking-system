@@ -119,7 +119,7 @@ sequenceDiagram
     participant P as Outbox publisher
     participant K as Kafka
     C->>A: Booking request + Idempotency-Key
-    A->>D: Begin transaction; insert or lock user/key
+    A->>D: Begin transaction and insert or lock user/key
     alt Completed key with matching request hash
         D-->>A: Associated booking
         A->>D: Commit
@@ -152,7 +152,7 @@ sequenceDiagram
     participant A as Booking service
     participant D as PostgreSQL
     C->>A: Cancel booking
-    A->>D: Begin transaction; lock booking FOR UPDATE
+    A->>D: Begin transaction and lock booking FOR UPDATE
     alt Booking is not CONFIRMED
         A->>D: Roll back
         A-->>C: HTTP 409
@@ -162,7 +162,7 @@ sequenceDiagram
             A->>D: Roll back
             A-->>C: HTTP 409
         else Restoration succeeds
-            A->>D: Set CANCELLED; insert cancellation outbox event
+            A->>D: Set CANCELLED and insert cancellation outbox event
             A->>D: Commit
             A-->>C: Cancelled booking
         end
@@ -542,7 +542,11 @@ pom.xml
 
 ## Team
 
-**B Revanth Kumar · J Shashivardhan · K Yuvaraju**
+| Team member | Roll number |
+| --- | --- |
+| B Revanth Kumar | 202451030 |
+| J Shashivardhan | 202451082 |
+| K Yuvaraju | 202452325 |
 
 **Mentor:** Dr. Bhupendra Kumar
 
