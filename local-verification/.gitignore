@@ -1,0 +1,11 @@
+.db-password
+compose.local.json
+*.log
+tools/
+results/
+plans/
+fixtures.json
+functional-results.json
+post-check-results.json
+results-summary.json
+*.txt

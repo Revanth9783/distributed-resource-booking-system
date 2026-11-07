@@ -8,7 +8,7 @@ A backend engineering project addressing three practical booking problems: compe
 
 The system combines **atomic database reservation**, **transactional idempotency**, and a **transactional outbox**, with three application replicas behind Nginx. REST APIs support users, resources, availability slots, quantity-based bookings, history, and cancellation.
 
-**[Explore the architecture](#architecture) · [See the results](#testing-and-results) · [Run locally](#build-and-run-with-docker-compose) · [Browse the API](#rest-api)**
+**[Explore the architecture](#architecture) · [See the results](#testing-and-results) · [Run locally](#reproduce-the-test-results) · [Browse the API](#rest-api)**
 
 > **Recorded highlights:** 24,893 read requests at 206.2 requests/sec in the documented 100-user run, with 0% recorded errors; matching-key retries returned the same booking; cancellation restored inventory; 100 sequential reads succeeded after one application replica was stopped. These observations apply to the documented workloads and local environment.
 
@@ -34,8 +34,7 @@ A booking is more than a database insert. Separate availability reads and update
 - [Design and correctness](#design-and-correctness)
 - [Data model](#data-model)
 - [Testing and results](#testing-and-results)
-- [Requirements](#requirements)
-- [Build and run](#build-and-run-with-docker-compose)
+- [Reproduce the test results](#reproduce-the-test-results)
 - [REST API](#rest-api)
 - [Automated tests](#automated-tests)
 - [Observability](#observability)
@@ -309,61 +308,127 @@ The Kafka message count and outbox row count are separate observations, not proo
 **Environment and evidence boundaries:** the notes identify three app replicas, Nginx, JMeter 5.6.3, and Windows PowerShell. Hardware, database/pool tuning, and load-generator isolation are not documented. The uploaded material does not substantiate a 10,000-concurrent-user result. No JUnit execution report accompanies this results set.
 
 
-## Requirements
+## Reproduce the test results
 
-> **Database setup prerequisite:** the repository has no migrations or schema SQL and uses `ddl-auto=validate`. Install the matching schema first; an empty database is insufficient. Commands below are conditional on that prerequisite.
+The local verification path below supplies PostgreSQL, a test schema, generated credentials, fixture creation, and the test launchers. It uses three application replicas and the same booking code. The accompanying resource-cache correction fixes an HTTP 500 discovered on repeated resource-list reads.
 
-- JDK 21 and network access for Maven Wrapper downloads.
-- Docker Engine/Desktop with Docker Compose for the supplied deployment.
-- PostgreSQL reachable from containers at `host.docker.internal:5432`, database `resource_booking`, and a compatible preinstalled schema. PostgreSQL is not included in Compose.
-- A database account matching the configuration (currently `postgres`). Use a dedicated least-privilege account for a hardened deployment.
+### 1. Install the prerequisites
 
-The entities map `users`, `resources`, `availability_slots`, `bookings`, `idempotency_keys`, `outbox_events`, and `processed_events`. Native inserts omit `idempotency_keys.created_at` and `processed_events.processed_at`; the database must populate those required timestamps, for example through defaults or triggers. Idempotency requires a unique constraint on `(user_id, key)`; event deduplication requires a unique event ID. Recommended migrations should also define referential integrity, capacity/time checks, and appropriate indexes. The resource type catalog referenced by `resourceTypeId` is not implemented in this repository.
+- Windows with **PowerShell 7**, Git, Python 3, and a JDK with `JAVA_HOME` set.
+- **Docker Desktop running its Linux engine**. Confirm `docker info` succeeds before continuing.
+- Free local ports `8082`, `55432`, `16379`, and `19092`.
+- Internet access for Maven dependencies, container images, and JMeter.
 
-## Build and run with Docker Compose
+The project targets Java 21. The recorded verification used JDK 26.0.1 for Maven/JMeter and the Dockerfile's Java 21 runtime for the application. On another machine, record the versions used alongside the results. Open PowerShell 7 and check:
 
-Clone and enter the repository first:
+```powershell
+$PSVersionTable.PSVersion
+git --version
+python --version
+& "$env:JAVA_HOME/bin/java.exe" -version
+docker info
+```
 
-```sh
+If a command fails, complete that prerequisite before proceeding. On this machine Docker Desktop needed a local runtime-socket repair before its engine could start. A Docker startup failure must be resolved before application testing.
+
+### 2. Download and build the application
+
+```powershell
 git clone https://github.com/Revanth9783/distributed-resource-booking-system.git
 cd distributed-resource-booking-system
+./mvnw.cmd -B -DskipTests package
 ```
 
-After installing the matching PostgreSQL schema, set `DB_PASSWORD` in your shell or in an uncommitted `.env` file:
+Continue after Maven reports `BUILD SUCCESS`. The Dockerfile requires the packaged JAR in `target/`. Skipping tests here creates the deployment artifact. Step 5 executes the test suite.
 
-```dotenv
-DB_PASSWORD=replace-with-your-local-database-password
+### 3. Start the complete local test deployment
+
+```powershell
+cd local-verification
+python prepare_environment.py
+docker compose -p booking-evaluation -f compose.local.json up -d --build
+./wait-ready.ps1
 ```
 
-Build the application JAR before building the image. The Dockerfile copies a prebuilt JAR and does not run Maven.
+This creates a separate Compose project with PostgreSQL 16, Redis 7, Kafka 4.1.1, Nginx, and three application replicas. `schema.sql` initializes the new PostgreSQL volume. Credentials are generated locally into ignored files. The database connection, Redis host, and Kafka listeners are configured by the generated Compose file.
 
-```sh
-./mvnw clean package -DskipTests
-docker compose up --build -d
-docker compose logs -f app1
+Use this generated deployment for the commands in this section. The root `compose.yaml` is the earlier deployment configuration and expects a separately provisioned PostgreSQL database.
+
+If readiness fails, inspect the logs before testing:
+
+```powershell
+docker compose -p booking-evaluation -f compose.local.json ps
+docker compose -p booking-evaluation -f compose.local.json logs --tail 80 app1 app2 app3 postgres
 ```
 
-On Windows, use `./mvnw.cmd` instead of `./mvnw`. Skipping tests here only builds the deployment artifact; it does not establish correctness.
+The initialization SQL runs only for a new PostgreSQL volume. Preserve an existing test database as evidence, and use a separate checkout plus a distinct Compose project name for an independent fresh run. Running this walkthrough twice against existing data changes fixture IDs and dataset size.
 
-On Linux Docker Engine, `host.docker.internal` may require an explicit host-gateway mapping for each app service. Configure PostgreSQL to accept connections from the Docker network.
+### 4. Verify the API and create test fixtures
 
-| Service | Local address |
+```powershell
+./functional-checks.ps1
+```
+
+The script verifies booking creation, matching-key replay, capacity deduction once, changed-payload conflict, cancellation, duplicate-cancellation rejection, and capacity restoration. It saves fixture IDs and check results. The fresh fixture has two users and one resource with 21 slots, including a dedicated 100-unit slot for the booking load test.
+
+Continue only if the script reports success. The integration test uses users 1 and 2, which this fixture setup provides on a fresh verification database.
+
+### 5. Run the JUnit suite
+
+```powershell
+./run_junit.ps1
+```
+
+Expect **five tests, zero failures, and zero errors**, including the resource-cache regression test. Reports appear in `target/surefire-reports` in the repository root. The launcher sets connection details for the verification services automatically.
+
+### 6. Prepare and run JMeter
+
+```powershell
+./download_jmeter.ps1
+python prepare_plans.py
+./run_load_tests.ps1
+python summarize_results.py
+```
+
+The tool download is checked against Apache's SHA-512 checksum. Plan preparation substitutes fixture IDs and disables the original GUI collectors and machine-specific output destinations. A booking postprocessor records failed-response bodies in the sample message for auditing.
+
+The launcher runs the five original workloads sequentially in command-line mode and writes raw `.jtl` files and HTML reports under `local-verification/results/`. Allow several minutes plus download and report-generation time. Inspect each `*-report/index.html` and `results-summary.json`.
+
+Java launches JMeter with relative paths because the Windows launchers failed with absolute paths containing Thai characters on the verification machine. The supplied script includes the working launch method. Each run checks for both raw samples and a generated report before reporting completion.
+
+The launcher uses fixed names for a clean first run. Archive the run directory before rerunning and use a fresh setup, avoiding appended samples or a non-empty HTML report destination.
+
+| Plan | Workload |
 | --- | --- |
-| REST API through Nginx | http://localhost:8082 |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 |
-| Redis | localhost:6379 |
-| Kafka published port | localhost:9092 |
+| `baseline-10-users.jmx` | 10 threads, 10 s ramp-up, 60 s duration |
+| `load-test-50-users.jmx` | 50 threads, 25 s ramp-up, 60 s duration |
+| `load-test-sustained-100-users.jmx` | 100 threads, 30 s ramp-up, 120 s duration |
+| `load-test-500-users.jmx` | 500 threads, one read each, 60 s ramp-up |
+| `Concurrent Booking Request.jmx` | 500 threads, 30 s ramp-up, 10 attempts each |
 
-Kafka advertises `kafka:9092`, intended for containers on the Compose network. Host applications need a separate externally reachable advertised listener; changing the bootstrap address alone does not fix this.
+### 7. Verify the final state and replica behavior
 
-Configure Grafana's Prometheus data source as `http://prometheus:9090`. No dashboards or data-source provisioning files are included.
-
-```sh
-docker compose down
+```powershell
+./post-checks.ps1
 ```
 
-Named volumes remain after this command. These instructions describe the supplied files; a fresh installation has not been independently verified.
+Review the saved outputs:
+
+- `database-verification.txt` should show **100 confirmed bookings, 100 booked units, zero available units, and status FULL** for the booking-load slot. No slot should have negative availability.
+- `results-summary.json` should classify 100 booking responses as HTTP 201 and 4,900 as HTTP 409. Inspect the captured failure messages for the capacity rejection reason.
+- `post-check-results.json` records repeated resource-cache reads, the read-slot count, backend distribution, and 100 sequential reads after stopping one replica. The script restarts that replica in a `finally` block.
+
+Different hardware, datasets, software versions, and background activity affect throughput and latency. Compare booking invariants separately from performance. The original 500-thread arrival plan does not establish 500 simultaneously active requests.
+
+### 8. Save evidence and stop the deployment
+
+Keep the tested revision, machine specifications, fixture IDs, raw samples, reports, and database checks together. Exclude `.db-password`, `compose.local.json`, and tool binaries when publishing. The supplied ignore rules cover generated files.
+
+```powershell
+docker compose -p booking-evaluation -f compose.local.json stop
+```
+
+The command stops the verification deployment and preserves its database. Other Compose projects are outside this deployment.
 
 ## REST API
 
@@ -418,15 +483,14 @@ Successful creation returns HTTP 201, including successful booking replays. Read
 
 ## Automated tests
 
-```sh
-./mvnw -Dtest=UserServiceTest test
-./mvnw test
-```
+| Class | Checks |
+| --- | --- |
+| `UserServiceTest` | Password hashing and duplicate-email rejection |
+| `BookingConcurrencyTest` | Two contenders for the final unit and final database state |
+| `ResourceBookingApplicationTests` | Application-context loading |
+| `RedisCacheConfigTest` | Resource DTO types survive a cache serialization round trip |
 
-The unit tests check password hashing and duplicate-email rejection. The full suite includes an application-context test and a two-thread last-unit booking test. Integration tests currently use the normal application configuration and require external infrastructure and the existing schema. The concurrency test assumes users 1 and 2 exist and assigns resource type ID 1; whether a corresponding resource-type row is required depends on the external schema. Run against a disposable test database, never a production database. The concurrency test does not establish multi-instance or failure-recovery correctness.
-
-Four test methods are present in source. This inventory is separate from a recorded passing execution. The concurrency test catches any exception as a failed booking attempt; precise rejection assertions remain an improvement. JMeter plans require matching fixtures, reset inventory, and updated machine-specific output paths before reproduction.
-
+Follow [Reproduce the test results](#reproduce-the-test-results) to create the isolated database and fixtures before running `local-verification/run_junit.ps1`. The suite requires external services and fixture users. Its two-request concurrency test catches any exception as a losing attempt, so more precise failure assertions remain a future improvement.
 
 ## Observability
 
@@ -439,7 +503,7 @@ The current success counter includes successful replays and increments before th
 | Current boundary | Next improvement |
 | --- | --- |
 | No authentication, booking ownership, or admin roles | Identity-based access and service-layer permissions |
-| External schema; no committed migrations | Versioned migrations and a reproducible development database |
+| Verification schema supplied separately from production migrations | Versioned production migrations and broader schema lifecycle testing |
 | Missing resource-level overlap/capacity policy and booking eligibility checks | Enforce inventory rules, active status, and booking cutoffs |
 | Cancellation rejects blocked/closed slots | Separate inventory restoration from administrative bookability |
 | Idempotency expiry is stored but not enforced | Expiry, retention, and cleanup policies |
@@ -492,4 +556,4 @@ pom.xml
 
 ## License
 
-No project license is included in the documented revision. Contact the maintainers regarding reuse terms.
+No project license is included in the documented base revision. Contact the maintainers regarding reuse terms.
